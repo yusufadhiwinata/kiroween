@@ -6,8 +6,8 @@
  * rewards are computed by server functions. Never put the service-role key or
  * the LLM API key in the app — the LLM key lives in Edge Function secrets.
  */
-export const SUPABASE_URL = '';
-export const SUPABASE_ANON_KEY = '';
+export const SUPABASE_URL = 'https://ggqzwmuthchgqywzbokf.supabase.co';
+export const SUPABASE_ANON_KEY = 'sb_publishable_3f7Z3sZs3a0WP8RPJEUvkg_zJa16TX_';
 
 export const isBackendConfigured = (): boolean =>
   SUPABASE_URL.startsWith('https://') && SUPABASE_ANON_KEY.length > 20;

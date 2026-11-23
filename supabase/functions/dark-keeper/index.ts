@@ -70,12 +70,12 @@ function systemPrompt(mode: Mode, context: string): string {
   return [
     'You are the Dark Keeper, the hooded guardian spirit of GRAVEYARD, a Halloween world restored by real-life productivity.',
     'Persona: mysterious, warm, encouraging, lightly spooky (lanterns, souls, fog) but never scary or condescending.',
-    'Give concrete, practical help. Keep "reply" under 170 words. Reply in the same language the Keeper writes in.',
+    'Give concrete, practical help. Keep "reply" under 120 words; put the actionable steps in "proposals", not in the reply. Reply in the same language the Keeper writes in.',
     'Never invent stats; rely only on the context below. Never ask for passwords or personal secrets.',
     '',
     `Task mode: ${mode}. ${MODE_INSTRUCTIONS[mode]}`,
     '',
-    'Respond ONLY with a JSON object of this exact shape:',
+    'Respond ONLY with one raw JSON object (no markdown, no code fences, no text before or after) of this exact shape:',
     '{"reply": string, "proposals": [{"kind": "quest" | "ritual", "title": string (<= 80 chars), "description": string (<= 200 chars),',
     ' "difficulty": "easy"|"medium"|"hard"|"boss", "priority": "low"|"medium"|"high"|"urgent", "deadline_days": integer 0-30 or null,',
     ` "category": one of ${JSON.stringify(CATEGORIES)} or null, "schedule_type": "daily"|"weekly" (rituals only)}]}`,
@@ -152,7 +152,8 @@ async function callLLM(messages: ChatMessage[]) {
           model,
           messages,
           temperature: 0.7,
-          max_tokens: 900,
+          // Room for the reply plus up to 8 proposals; truncated JSON is salvaged by parseModelOutput.
+          max_tokens: 2000,
           ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
         }),
         signal: controller.signal,
@@ -220,15 +221,66 @@ function sanitizeProposal(p: unknown): Proposal | null {
   };
 }
 
+function toProposals(list: unknown[]): Proposal[] {
+  return list.slice(0, 8).map(sanitizeProposal).filter((p): p is Proposal => p !== null);
+}
+
+/**
+ * Recovers what it can from JSON that was cut off (e.g. the model hit max_tokens):
+ * the "reply" string (complete or partial) and every fully closed proposal object.
+ */
+function salvageJson(raw: string): { reply: string; proposals: Proposal[] } | null {
+  const replyMatch = raw.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)("?)/);
+  if (!replyMatch) return null;
+  let reply = '';
+  try {
+    reply = JSON.parse(`"${replyMatch[1].replace(/\\$/, '')}"`);
+  } catch (_) {
+    reply = replyMatch[1].replace(/\\n/g, ' ').replace(/\\"/g, '"');
+  }
+  const found: unknown[] = [];
+  const start = raw.indexOf('"proposals"');
+  if (start >= 0) {
+    let depth = 0;
+    let objStart = -1;
+    let inString = false;
+    for (let i = raw.indexOf('[', start) + 1; i > 0 && i < raw.length; i++) {
+      const ch = raw[i];
+      if (inString) {
+        if (ch === '\\') i++;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === '{') {
+        if (depth === 0) objStart = i;
+        depth++;
+      } else if (ch === '}') {
+        depth--;
+        if (depth === 0 && objStart >= 0) {
+          try {
+            found.push(JSON.parse(raw.slice(objStart, i + 1)));
+          } catch (_) {
+            // skip malformed object
+          }
+          objStart = -1;
+        }
+      } else if (ch === ']' && depth === 0) break;
+    }
+  }
+  const complete = replyMatch[2] === '"';
+  return { reply: clean(reply, 4000) + (complete ? '' : '…'), proposals: toProposals(found) };
+}
+
 function parseModelOutput(raw: string): { reply: string; proposals: Proposal[] } {
   try {
     const obj = JSON.parse(extractJson(raw));
     const reply = clean(obj?.reply, 4000) || 'The lanterns flicker... I have gathered some quests for you.';
-    const proposals = Array.isArray(obj?.proposals)
-      ? obj.proposals.slice(0, 8).map(sanitizeProposal).filter((p: Proposal | null): p is Proposal => p !== null)
-      : [];
+    const proposals = Array.isArray(obj?.proposals) ? toProposals(obj.proposals) : [];
     return { reply, proposals };
   } catch (_) {
+    const salvaged = salvageJson(raw);
+    if (salvaged && salvaged.reply) return salvaged;
     // Model ignored the JSON contract: keep the text, drop structured proposals.
     return { reply: clean(raw, 4000) || 'The fog is too thick to answer right now. Ask me again, Keeper.', proposals: [] };
   }

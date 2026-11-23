@@ -9,7 +9,7 @@ schemas = ["public", "graphql_public"]
 site_url = "graveyard://auth"
 
 [auth.email]
-enable_signup = true
+enabled = true
 enable_confirmations = false
 
 [functions.dark-keeper]
