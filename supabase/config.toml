@@ -1,0 +1,16 @@
+# Supabase CLI configuration for GRAVEYARD.
+# Deploy: supabase link --project-ref <ref> && supabase db push && supabase functions deploy dark-keeper
+project_id = "graveyard"
+
+[api]
+schemas = ["public", "graphql_public"]
+
+[auth]
+site_url = "graveyard://auth"
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+
+[functions.dark-keeper]
+verify_jwt = true
